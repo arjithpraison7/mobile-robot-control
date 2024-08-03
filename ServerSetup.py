@@ -1,8 +1,9 @@
 import serial
-from flask import Flask, jsonify, Response
+from flask import Flask, jsonify, Response, request
 import threading
 import time
 import cv2
+import traceback
 
 app = Flask(__name__)
 
@@ -20,12 +21,18 @@ fps = int(camera.get(cv2.CAP_PROP_FPS))
 SERIAL_PORT = 'COM6'
 BAUD_RATE = 9600
 latest_value = "No data received yet"
+arduino_errors = []  # List to store Arduino errors
+python_errors = []  # List to store Python errors
+received_data = ""
+received_speed_data = ""
 
 try:
     ser = serial.Serial(SERIAL_PORT, BAUD_RATE)
     print(f"Connected to {SERIAL_PORT} at {BAUD_RATE} baud rate.")
 except serial.SerialException as e:
-    print(f"Error opening serial port {SERIAL_PORT}: {e}")
+    error_message = f"Error opening serial port {SERIAL_PORT}: {e}"
+    print(error_message)
+    arduino_errors.append(error_message)
     ser = None
 
 def read_from_serial():
@@ -38,7 +45,9 @@ def read_from_serial():
                     print(f"Received: {line}")  # Debugging line
                     latest_value = line
             except Exception as e:
-                print(f"Error reading from serial port: {e}")
+                error_message = f"Error reading from serial port: {e}"
+                print(error_message)
+                arduino_errors.append(error_message)
                 time.sleep(1)
     else:
         print("Serial port not available. Exiting read_from_serial.")
@@ -74,17 +83,23 @@ def video_feed():
 @app.route('/receive_data', methods=['POST', 'GET'])
 def receive_data():
     global received_data
-    if request.method == 'POST':
-        received_data = request.data.decode('utf-8')
-        if ser and ser.is_open:
-            ser.baudrate = 19200  # Change baud rate to 19200 for sending data
-            ser.write((received_data.lower() + '\n').encode())
-            print(f"Sent from Server: {received_data}")
-            ser.baudrate = 9600  # Revert baud rate to 9600 for receiving sensor data
-        return "Data received", 200
-    elif request.method == 'GET':
-        return received_data
-        
+    try:
+        if request.method == 'POST':
+            received_data = request.data.decode('utf-8')
+            if ser and ser.is_open:
+                ser.baudrate = 19200  # Change baud rate to 19200 for sending data
+                ser.write((received_data.lower() + '\n').encode())
+                print(f"Sent from Server: {received_data}")
+                ser.baudrate = 9600  # Revert baud rate to 9600 for receiving sensor data
+            return "Data received", 200
+        elif request.method == 'GET':
+            return received_data
+    except Exception as e:
+        error_message = f"Error in /receive_data route: {e}"
+        print(error_message)
+        python_errors.append(error_message)
+        return "Internal Server Error", 500
+
 # Flask route to handle handshake
 @app.route('/handshake')
 def handshake():
@@ -97,5 +112,46 @@ def get_data():
     else:
         return latest_value
 
+# Flask route to get Arduino errors
+@app.route('/arduino_errors', methods=['GET'])
+def arduino_errors_route():
+    return str(arduino_errors)
+
+# Flask route to get Python errors
+@app.route('/raspberry_pi_errors', methods=['GET'])
+def raspberry_pi_errors_route():
+    return str(python_errors)
+    
+@app.route('/battery_percentage')
+def battery_percentage():
+    battery_level = 57 # Example battery percentage
+    return str(battery_level)
+
+@app.route('/speed_control', methods=['POST', 'GET'])
+def speed_control():
+    global received_speed_data
+    try:
+        if request.method == 'POST':
+            received_speed_data = request.data.decode('utf-8')
+            if ser and ser.is_open:
+                ser.baudrate = 19200  # Change baud rate to 19200 for sending data
+                ser.write((received_speed_data.lower() + '\n').encode())
+                print(f"Sent from Server: {received_speed_data}")
+                ser.baudrate = 9600  # Revert baud rate to 9600 for receiving sensor data
+            return "Data received", 200
+        elif request.method == 'GET':
+            return received_speed_data
+    except Exception as e:
+        error_message = f"Error in /speed_control route: {e}"
+        print(error_message)
+        python_errors.append(error_message)
+        return "Internal Server Error", 500
+
+
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', use_reloader=False)
+    try:
+        app.run(debug=True, host='0.0.0.0', use_reloader=False)
+    except Exception as e:
+        error_message = f"Error starting Flask server: {e}"
+        print(error_message)
+        python_errors.append(error_message)
